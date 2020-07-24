@@ -51,6 +51,7 @@ run-stunnel() {
   # Wait for the app to finish.
   at "wait-app pid=$pid"
   wait $pid
+  app_status=$?
 
   # Kill the auxiliary processes.
   # Send each one SIGHUP which will be translated by the trap in aux-start.
@@ -59,6 +60,12 @@ run-stunnel() {
     at "kill-aux name=$name pid=${pids[$name]} signal=${signals[$name]}"
     kill -SIGHUP "${pids[$name]}"
   done
+
+  if [ $app_status -ne 0 ]; then
+    echo "app crashed with status code: $app_status!"
+    echo "failing release"
+    exit 1
+  fi
 }
 
 config-gen() {
@@ -118,7 +125,7 @@ app-start() {
     # Start child in the background. This is before the trap because
     # the app needs to be able to receive when the dyno broadcasts
     # SIGTERM on shutdown.
-    "$@" &
+    "$@" & app_pid=$!
 
     # Translate SIGHUP to the appropriate signal to stop the child
     # (probably SIGTERM in this case). This *will* cancel the wait and may
@@ -128,6 +135,12 @@ app-start() {
     # Ignore SIGTERM because the dyno will broadcast it to all children --
     # there is no need to translate it.
     trap "" SIGTERM
+
+    wait $app_pid
+    app_status=$?
+    if [ $app_status -ne 0 ]; then
+      _exit 1
+    fi
 
     # Wait for the app to finish, either by crash or by $signal
     wait
